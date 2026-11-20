@@ -1,6 +1,6 @@
 # Incheon Card Transaction Analytics — Snowflake + dbt ELT Pipeline
 
-Production-scale ELT pipeline built during my **Data Analytics internship at Novelsoft (June – July 2026)**.
+Production-scale ELT pipeline built during my **Data Analyst internship at Novelsoft (2026)**.
 It loads **263.96 million card transactions** (synthetic Hana Bank card data for Incheon, 2023 – 2024, 11 GB in 53 CSV files) into **Snowflake** and
 models them with **dbt** in a bronze → silver → gold (medallion) architecture that feeds a three-page **Tableau** dashboard.
 
