@@ -1,0 +1,19 @@
+version: 2
+
+models:
+  - name: dim_hosts
+    description: "Dimension table for Airbnb hosts"
+    columns:
+      - name: host_id
+        description: "Unique identifier for the host"
+        tests:
+          - unique
+          - not_null
+      - name: host_name
+        description: "Name of the host ('Anonymous' when missing)"
+      - name: is_superhost
+        description: "Indicates if the host is a superhost"
+      - name: created_at
+        description: "Date when the host joined Airbnb"
+      - name: updated_at
+        description: "Date when the host information was last updated"

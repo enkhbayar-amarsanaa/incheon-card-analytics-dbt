@@ -1,0 +1,360 @@
+version: 2
+
+models:
+
+  # ══════════════════════════════════════════
+  # BRONZE
+  # ══════════════════════════════════════════
+  - name: bronze_transactions
+    description: >
+      Bronze layer. Raw card transaction records loaded directly from 53 CSV source files
+      via Snowflake internal stage and COPY INTO. No business logic applied —
+      only null filtering on key1 and apv_d to remove completely unusable rows.
+      263,959,392 total rows covering Incheon card transactions from January 2023
+      to December 2024.
+    columns:
+      - name: key1
+        description: "Anonymized customer identifier assigned by the card network. Persistent across transactions — one customer can have many rows."
+        tests:
+          - not_null
+      - name: blk
+        description: "Merchant location block ID. Joins to the incheon_blk seed table via the fid column to retrieve latitude and longitude."
+        tests:
+          - not_null
+      - name: apv_d
+        description: "Transaction approval date stored as a raw 8-character string in YYYYMMDD format. Parsed into a proper date in the silver layer."
+        tests:
+          - not_null
+      - name: sex_cd
+        description: "Raw gender code as recorded by the card network. M = Male, F = Female. A small number of records contain other values."
+      - name: age_cd
+        description: "Raw age group code as recorded by the card network. Values are decade-based age brackets."
+      - name: cty_cd
+        description: "Raw 2-digit home city or region code of the customer. Decoded to full city names in the silver layer."
+      - name: mkt_cd
+        description: "Raw merchant category code ranging from Y01 to Y21. Decoded to readable English category names in the silver layer."
+        tests:
+          - not_null
+      - name: amt
+        description: "Transaction amount in Korean Won (KRW). Stored as a number in the source."
+        tests:
+          - not_null
+      - name: cnt
+        description: "Number of individual sub-transactions bundled into this record."
+
+  # ══════════════════════════════════════════
+  # SILVER
+  # ══════════════════════════════════════════
+  - name: silver_transactions
+    description: >
+      Silver layer. Business-ready transformation of bronze_transactions. All raw codes
+      are decoded into readable English labels. Dates are parsed from YYYYMMDD strings
+      into proper date types. Day of week and week type are derived. Customers are
+      classified into visitor types. Merchant categories are mapped to both specific
+      categories and broader category groups. This is the primary source table for all
+      gold models.
+    columns:
+      - name: key1
+        description: "Anonymized customer identifier, carried through from bronze."
+        tests:
+          - not_null
+      - name: blk
+        description: "Merchant location block ID, carried through from bronze."
+        tests:
+          - not_null
+      - name: txn_date
+        description: "Transaction date parsed from the raw YYYYMMDD string using TRY_TO_DATE. Rows where the date cannot be parsed are excluded."
+        tests:
+          - not_null
+      - name: txn_month
+        description: "First day of the transaction month derived using DATE_TRUNC. Used for monthly aggregations in all gold models."
+        tests:
+          - not_null
+      - name: txn_year
+        description: "Calendar year of the transaction. Either 2023 or 2024."
+        tests:
+          - not_null
+      - name: sex
+        description: "Decoded gender label. M → Male, F → Female, all others → Other."
+      - name: age_group
+        description: "Age group code as provided in the source data. Decade-based brackets. Unknown or coded values appear as * or 99."
+      - name: city
+        description: "Customer home city decoded from the raw cty_cd using the official Korean administrative region mapping."
+      - name: cty_cd
+        description: "Raw home city code retained alongside the decoded city name for reference."
+      - name: visitor_type
+        description: "Business classification of the customer based on home city. Incheon Local (cty_cd=28), Foreign Visitor (cty_cd=99), Other (cty_cd=*, unknown), or Domestic Visitor (all other cities)."
+        tests:
+          - not_null
+      - name: mkt_cd
+        description: "Raw merchant category code retained for reference."
+      - name: category
+        description: "Specific merchant category decoded from mkt_cd into English. For example Y01 → Korean Restaurant, Y08 → Convenience Store."
+        tests:
+          - not_null
+      - name: category_group
+        description: "Broader merchant category group. Aggregates specific categories into groups such as Food & Dining, Retail, Travel & Stay, Healthcare."
+        tests:
+          - not_null
+      - name: amt
+        description: "Transaction amount in Korean Won."
+        tests:
+          - not_null
+      - name: cnt
+        description: "Number of sub-transactions in this record."
+
+  # ══════════════════════════════════════════
+  # GOLD — FACT
+  # ══════════════════════════════════════════
+  - name: fact_transactions
+    description: >
+      Gold fact table. The central transaction-level table that all gold aggregate models
+      are built from. Enriches silver_transactions with geographic coordinates by joining
+      the incheon_blk seed table on the blk field. Adds day of week and weekend
+      classification derived from the transaction date. One row per original transaction.
+      This table is the single source of truth for all downstream analytics.
+    columns:
+      - name: customer_id
+        description: "Anonymized customer identifier renamed from key1 for clarity."
+        tests:
+          - not_null
+      - name: blk
+        description: "Merchant location block ID."
+        tests:
+          - not_null
+      - name: lat
+        description: "Latitude of the merchant block from the incheon_blk reference table. Null when the block ID has no matching coordinate record."
+      - name: lon
+        description: "Longitude of the merchant block from the incheon_blk reference table. Null when the block ID has no matching coordinate record."
+      - name: txn_date
+        description: "Transaction date."
+        tests:
+          - not_null
+      - name: txn_month
+        description: "First day of the transaction month for monthly grouping."
+      - name: txn_year
+        description: "Transaction year, 2023 or 2024."
+      - name: day_of_week
+        description: "ISO day of week from Snowflake DAYOFWEEKISO: 1 = Monday through 7 = Sunday (independent of the WEEK_START session setting)."
+      - name: day_name
+        description: "Full day name derived from day_of_week. Monday through Sunday."
+      - name: week_type
+        description: "Weekday or Weekend classification. Saturday and Sunday are Weekend, all others are Weekday."
+      - name: sex
+        description: "Decoded customer gender."
+      - name: age_group
+        description: "Customer age group code."
+      - name: city
+        description: "Decoded customer home city."
+      - name: cty_cd
+        description: "Raw home city code."
+      - name: visitor_type
+        description: "Incheon Local, Domestic Visitor, Foreign Visitor, or Other (unknown home city)."
+        tests:
+          - not_null
+      - name: mkt_cd
+        description: "Raw merchant category code."
+      - name: category
+        description: "Decoded specific merchant category."
+      - name: category_group
+        description: "Decoded broad merchant category group."
+      - name: amt
+        description: "Transaction amount in Korean Won."
+        tests:
+          - not_null
+      - name: cnt
+        description: "Number of sub-transactions in this record."
+
+  # ══════════════════════════════════════════
+  # GOLD — AGGREGATES
+  # ══════════════════════════════════════════
+  - name: agg_spending_by_city
+    description: >
+      Gold aggregate table powering the Market Overview dashboard page.
+      Pre-aggregates fact_transactions to a summary grain of month, year, day name,
+      week type, city, visitor type, gender, age group, category, and category group.
+      Covers all transactions regardless of whether they have geographic coordinates.
+      Used for all KPI cards, trend lines, origin charts, day-of-week analysis,
+      year-over-year comparison, and category breakdowns on Page 1.
+    columns:
+      - name: txn_month
+        description: "First day of the month being summarized. Used as the time axis for trend charts."
+        tests:
+          - not_null
+      - name: txn_year
+        description: "Year being summarized, 2023 or 2024."
+      - name: day_name
+        description: "Day of week name for the transactions in this group. Used for the Revenue by Day of Week chart."
+      - name: week_type
+        description: "Weekday or Weekend classification."
+      - name: city
+        description: "Customer home city for this group."
+        tests:
+          - not_null
+      - name: cty_cd
+        description: "Raw home city code."
+      - name: visitor_type
+        description: "Incheon Local, Domestic Visitor, Foreign Visitor, or Other (unknown home city)."
+        tests:
+          - not_null
+      - name: sex
+        description: "Customer gender for this group."
+      - name: age_group
+        description: "Customer age group for this group."
+      - name: category
+        description: "Specific merchant category."
+        tests:
+          - not_null
+      - name: category_group
+        description: "Broad merchant category group."
+        tests:
+          - not_null
+      - name: mkt_cd
+        description: "Raw merchant category code."
+      - name: transaction_count
+        description: "Total number of transactions in this group."
+        tests:
+          - not_null
+      - name: total_amount
+        description: "Total spending in Korean Won for this group."
+        tests:
+          - not_null
+      - name: avg_amount
+        description: "Average transaction amount for this group."
+      - name: unique_customers
+        description: "Number of distinct customers in this group. Do not SUM this across groups as it will double count — use COUNTD in Tableau instead."
+
+  - name: agg_location_category
+    description: >
+      Gold aggregate table powering the Location Intelligence dashboard page.
+      Pre-aggregates fact_transactions to a geographic zone grain by rounding latitude
+      and longitude to 2 decimal places, creating approximately 1.1km spending zones.
+      Includes category-level breakdown within each zone so a single table supports
+      both the map heatmap and the category mix chart with full filter interactivity.
+      Only includes transactions where lat and lon are available.
+    columns:
+      - name: district_lat
+        description: "Latitude rounded to 2 decimal places creating ~1.1km coordinate-based spending zones. Not an official administrative district boundary."
+        tests:
+          - not_null
+      - name: district_lon
+        description: "Longitude rounded to 2 decimal places for the same zone grid system."
+        tests:
+          - not_null
+      - name: representative_block
+        description: "The MAX block ID within the zone, used as a label to identify the zone in the Top 5 ranking chart."
+      - name: txn_month
+        description: "First day of the month being summarized."
+        tests:
+          - not_null
+      - name: txn_year
+        description: "Year being summarized."
+      - name: category
+        description: "Specific merchant category for this zone and month combination."
+        tests:
+          - not_null
+      - name: category_group
+        description: "Broad merchant category group."
+        tests:
+          - not_null
+      - name: mkt_cd
+        description: "Raw merchant category code."
+      - name: visitor_type
+        description: "Incheon Local, Domestic Visitor, Foreign Visitor, or Other (unknown home city)."
+        tests:
+          - not_null
+      - name: transaction_count
+        description: "Total number of transactions in this zone, month, category, and visitor type combination."
+        tests:
+          - not_null
+      - name: total_amount
+        description: "Total spending in Korean Won for this combination."
+        tests:
+          - not_null
+      - name: avg_amount
+        description: "Average transaction amount for this combination."
+      - name: total_cnt
+        description: "Sum of the cnt field across all transactions in this group."
+      - name: unique_customers
+        description: "Number of distinct customers who transacted in this zone and category combination."
+      - name: blocks_in_zone
+        description: "Number of distinct original merchant blocks grouped into this coordinate zone."
+
+  # ══════════════════════════════════════════
+  # GOLD — DIMENSION
+  # ══════════════════════════════════════════
+  - name: dim_customer_rfm
+    description: >
+      Gold dimension table powering the Customer Intelligence dashboard page.
+      One row per unique customer aggregated from fact_transactions. Each customer
+      receives Recency, Frequency, and Monetary scores from 1 to 5 using NTILE
+      quintile distribution, then is assigned to one of 8 behavioral segments based
+      on combined score rules. Built from 12.3 million unique customer IDs across
+      the full 2023–2024 transaction history. Customers with zero monetary value
+      are excluded. Used for all customer segmentation, RFM distribution, demographic
+      heatmap, and visitor mix charts on Page 3.
+    columns:
+      - name: customer_id
+        description: "Anonymized unique customer identifier. One row per customer in this table."
+        tests:
+          - not_null
+          - unique
+      - name: visitor_type
+        description: "One representative visitor type per customer (MAX across the customer's transactions; home city is constant per customer in the source)."
+      - name: city
+        description: "Customer home city (MAX across the customer's transactions)."
+      - name: sex
+        description: "Customer gender."
+      - name: age_group
+        description: "Customer age group code."
+      - name: first_txn_date
+        description: "Date of this customer's earliest transaction in the 2023–2024 dataset."
+      - name: last_txn_date
+        description: "Date of this customer's most recent transaction in the dataset."
+      - name: recency_days
+        description: "Days between the customer's last transaction and 2024-12-31. Lower values indicate more recent activity."
+        tests:
+          - not_null
+      - name: active_span_days
+        description: "Days between the customer's first and last transaction, showing how long they have been active in the dataset."
+      - name: unique_active_days
+        description: "Number of distinct calendar days on which the customer made at least one transaction."
+      - name: frequency
+        description: "Total number of transactions made by this customer across the full dataset."
+        tests:
+          - not_null
+      - name: monetary
+        description: "Total amount spent by this customer across all transactions, rounded to the nearest Korean Won."
+        tests:
+          - not_null
+      - name: avg_transaction_amt
+        description: "Average transaction amount for this customer, rounded to the nearest Korean Won."
+      - name: r_score
+        description: "Recency score from 1 to 5. Score 5 means the customer transacted most recently. Derived by flipping the NTILE result so lower recency_days gets a higher score."
+        tests:
+          - not_null
+      - name: f_score
+        description: "Frequency score from 1 to 5. Score 5 means the customer has the highest transaction count. NTILE(5) over frequency in ascending order, so the lowest-frequency quintile scores 1 and the highest scores 5."
+        tests:
+          - not_null
+      - name: m_score
+        description: "Monetary score from 1 to 5. Score 5 means the customer has the highest total spend. NTILE(5) over monetary in ascending order, so the lowest-spend quintile scores 1 and the highest scores 5."
+        tests:
+          - not_null
+      - name: rfm_score
+        description: "Combined score displayed as a hyphen-separated string of the three individual scores, for example 5-4-3."
+      - name: rfm_total
+        description: "Sum of r_score, f_score, and m_score. Ranges from 3 (lowest) to 15 (highest). Used for the RFM Score Distribution histogram."
+      - name: customer_segment
+        description: >
+          Behavioral segment label assigned by rule-based logic on RFM scores.
+          Champion: r≥4, f≥4, m≥4.
+          Loyal Visitor: r≥3, f≥4.
+          At Risk - High Value: r≤2, f≥4.
+          New Visitor: r≥4, f≤2.
+          Potential Loyalist: r≥3, f≥3, m≥3.
+          Lapsed Visitor: r≤2, f≥2.
+          Lost: r=1, f≤2, m=1.
+          Occasional Visitor: all others.
+        tests:
+          - not_null

@@ -1,0 +1,43 @@
+version: 2
+
+sources:
+  - name: raw
+    database: incheon_db
+    schema: raw
+    description: >
+      Raw source data for the Incheon transaction analytics project.
+      Contains 263,959,392 card transaction records from January 2023 to
+      December 2024 loaded from 53 CSV files via Snowflake internal stage
+      and COPY INTO. No transformations applied at this layer.
+    tables:
+      - name: raw_transactions
+        description: "Raw card transaction records as loaded from source CSVs. One row per transaction."
+        columns:
+          - name: key1
+            description: "Anonymized customer identifier."
+            tests:
+              - not_null
+          - name: blk
+            description: "Merchant location block ID."
+            tests:
+              - not_null
+          - name: apv_d
+            description: "Transaction approval date as raw YYYYMMDD string."
+            tests:
+              - not_null
+          - name: sex_cd
+            description: "Raw gender code."
+          - name: age_cd
+            description: "Raw age group code."
+          - name: cty_cd
+            description: "Raw home city code."
+          - name: mkt_cd
+            description: "Raw merchant category code."
+            tests:
+              - not_null
+          - name: amt
+            description: "Transaction amount in Korean Won."
+            tests:
+              - not_null
+          - name: cnt
+            description: "Number of sub-transactions in this record."

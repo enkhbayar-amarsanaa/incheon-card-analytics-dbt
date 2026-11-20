@@ -1,0 +1,19 @@
+version: 2
+
+seeds:
+  - name: incheon_blk
+    description: >
+      Seed reference table mapping each Incheon merchant block ID to its geographic
+      coordinates. Loaded from a local CSV file using dbt seed. Joined to
+      silver_transactions in the fact_transactions model on the fid column to enrich
+      transactions with latitude and longitude for map visualizations. Required by
+      the Location Intelligence dashboard page.
+    config:
+      schema: raw
+    columns:
+      - name: fid
+        description: "Merchant block identifier. Joins to the blk column in silver_transactions and fact_transactions."
+      - name: lat
+        description: "Latitude coordinate of the block centroid in decimal degrees."
+      - name: lon
+        description: "Longitude coordinate of the block centroid in decimal degrees."
